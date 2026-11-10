@@ -454,3 +454,80 @@ func TestNextElementBytesMatchesReference(t *testing.T) {
 		t.Fatal("no walk read a single key")
 	}
 }
+
+// TestReusedDstReadsItsDocument steps one destination through documents that share some
+// of where their strings are, so that a destination that kept those of the document
+// before reads the wrong bytes, or fails to read them.
+func TestReusedDstReadsItsDocument(t *testing.T) {
+	// The key is in the string buffer of every document, so that NextElementBytes takes
+	// its fast path wherever the value is.
+	doc := func(msg []byte, strs *TStrings, off, n uint64) ParsedJson {
+		return ParsedJson{Message: msg, Strings: strs, Tape: []uint64{
+			word(TagString, STRINGBUFBIT), 1, word(TagString, off), n, word(TagObjectEnd, 0)}}
+	}
+	strsA, strsB := &TStrings{B: []byte("Aone")}, &TStrings{B: []byte("Btwo")}
+	msgA, msgB := []byte("alpha"), []byte("bravo")
+	buf := []byte("short+longer")
+	type step struct {
+		doc  ParsedJson
+		want string
+		err  error
+	}
+	for _, tt := range []struct {
+		name  string
+		steps []step
+	}{
+		{"other message and strings, value in the message", []step{
+			{doc(msgA, strsA, 0, 5), "alpha", nil},
+			{doc(msgB, strsB, 0, 5), "bravo", nil}}},
+		{"other message and strings, value in the string buffer", []step{
+			{doc(msgA, strsA, STRINGBUFBIT|1, 3), "one", nil},
+			{doc(msgB, strsB, STRINGBUFBIT|1, 3), "two", nil}}},
+		{"shared strings, other message of the same length", []step{
+			{doc(msgA, strsA, 0, 5), "alpha", nil},
+			{doc(msgB, strsA, 0, 5), "bravo", nil}}},
+		{"shared message, other strings", []step{
+			{doc(msgA, strsA, STRINGBUFBIT|1, 3), "one", nil},
+			{doc(msgA, strsB, STRINGBUFBIT|1, 3), "two", nil}}},
+		{"shorter slice of the same message", []step{
+			{doc(buf[:5], strsA, 6, 6), "", errors.New("string message offset (12) outside valid area (5)")},
+			{doc(buf, strsA, 6, 6), "longer", nil},
+			{doc(buf[:5], strsA, 6, 6), "", errors.New("string message offset (12) outside valid area (5)")}}},
+		{"zero destination, no message", []step{
+			{doc(nil, strsA, STRINGBUFBIT|1, 3), "one", nil}}},
+		{"same document again", []step{
+			{doc(msgA, strsA, 0, 5), "alpha", nil},
+			{doc(msgA, strsA, 0, 5), "alpha", nil}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, p := range []struct {
+				name string
+				next func(pj *ParsedJson, dst *Iter) (Type, error)
+			}{
+				{"NextElementBytes", func(pj *ParsedJson, dst *Iter) (Type, error) {
+					o := Object{tape: *pj}
+					_, typ, err := o.NextElementBytes(dst)
+					return typ, err
+				}},
+				{"AdvanceIter", func(pj *ParsedJson, dst *Iter) (Type, error) {
+					i := pj.Iter()
+					i.off = 2 // the value, past the key
+					return i.AdvanceIter(dst)
+				}},
+			} {
+				t.Run(p.name, func(t *testing.T) {
+					var dst Iter
+					for k, st := range tt.steps {
+						if typ, err := p.next(&st.doc, &dst); typ != TypeString || err != nil {
+							t.Fatalf("step %d: %v, %v, want a string", k, typ, err)
+						}
+						got, err := dst.StringBytes()
+						if string(got) != st.want || !sameErr(err, st.err) {
+							t.Errorf("step %d: %q, %v, want %q, %v", k, got, err, st.want, st.err)
+						}
+					}
+				})
+			}
+		})
+	}
+}

@@ -478,7 +478,9 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 					dst.t = t
 					dst.off = off
 					dst.addNext = into
-					dst.tape = o.tape
+					if !dst.tape.sameSource(&o.tape) {
+						dst.tape = o.tape
+					}
 					dst.tape.Tape = tape[:end]
 					o.off = end
 					return n, TagToType[t], nil

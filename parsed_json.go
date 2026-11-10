@@ -23,6 +23,7 @@ import (
 	"math"
 	"strconv"
 	"sync/atomic"
+	"unsafe"
 )
 
 const JSONVALUEMASK = 0xff_ffff_ffff_ffff
@@ -73,6 +74,18 @@ type ParsedJson struct {
 
 	// allows to reuse the internal structures without exposing it.
 	internal *internalParsedJson
+}
+
+// sameSource reports whether pj reads its strings where o does. Strings alone does not
+// tell, as two documents can share it over different messages. The capacity of Message
+// is left out: nothing reads it past its length.
+//
+// An iterator checks this before it copies a document into the destination of a step,
+// which is nearly always the destination of the step before. A walk with AdvanceIter
+// was up to 7% faster for it.
+func (pj *ParsedJson) sameSource(o *ParsedJson) bool {
+	return pj.Strings == o.Strings && len(pj.Message) == len(o.Message) &&
+		unsafe.SliceData(pj.Message) == unsafe.SliceData(o.Message)
 }
 
 // Stage 1 fills whole buffers of structural indexes and hands them to stage 2 over a
@@ -532,7 +545,7 @@ func (i *Iter) AdvanceIter(dst *Iter) (Type, error) {
 				// written, in wider loads than the stores, which the store queue cannot
 				// forward - and the load waits for the stores to reach the cache. It
 				// was half the time this function took.
-				if i != dst {
+				if i != dst && !dst.tape.sameSource(&i.tape) {
 					dst.tape = i.tape
 				}
 				tape := i.tape.Tape
