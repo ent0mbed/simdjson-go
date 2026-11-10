@@ -315,3 +315,23 @@ func BenchmarkIterRead(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkIterInterface(b *testing.B) {
+	if !SupportedCPU() {
+		b.SkipNow()
+	}
+	for _, name := range readCorpus {
+		pj := loadParsed(b, name)
+		b.Run(name, func(b *testing.B) {
+			b.SetBytes(int64(len(pj.Message)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				it := pj.Iter()
+				if _, err := it.Interface(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

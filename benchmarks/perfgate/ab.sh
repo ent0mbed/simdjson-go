@@ -6,7 +6,7 @@
 # result with perfgate.
 #
 #   ab.sh -b BASE -h HEAD (-g GROUP | -p PATTERN) [-v VARIANTS] [-r ROUNDS]
-#         [-t BENCHTIME] [-o OUTDIR] [-l LABEL] [-c CPU[,CPU...]] [-n]
+#         [-t BENCHTIME] [-o OUTDIR] [-l LABEL] [-c CPU[,CPU...]] [-s PATH[,PATH...]] [-n]
 #
 # GROUP names one of the benchmark sets CI runs, each in a job of its own:
 #
@@ -42,12 +42,17 @@
 # all three sets alike, and the units are dealt out to the workers in turn. Give
 # physical cores, not SMT siblings, and see benchmarks/README.md for how many.
 #
+# -s copies files from HEAD into the BASE tree before it is built - a corpus the change
+# adds, and the test file that lists it - so that a benchmark BASE does not have yet can
+# still be measured against BASE's code. Only test scaffolding belongs here: a library
+# file carried over would make BASE measure the change itself.
+#
 # -n skips perfgate's verdict from the exit status (report only), for calibration runs.
 set -euo pipefail
 
-base= head= pattern= label=
+base= head= pattern= label= carry=
 variants=4 rounds=3 benchtime=200ms out= cpu= report_only=
-while getopts "b:h:g:p:v:r:t:o:l:c:n" opt; do
+while getopts "b:h:g:p:v:r:t:o:l:c:s:n" opt; do
 	case $opt in
 	b) base=$OPTARG ;;
 	g)
@@ -70,6 +75,7 @@ while getopts "b:h:g:p:v:r:t:o:l:c:n" opt; do
 	o) out=$OPTARG ;;
 	l) label=$OPTARG ;;
 	c) cpu=$OPTARG ;;
+	s) carry=$OPTARG ;;
 	n) report_only=1 ;;
 	*) exit 2 ;;
 	esac
@@ -164,6 +170,15 @@ for side in base head; do
 	rev=$base
 	[ $side = head ] && rev=$head
 	git -C "$repo" worktree add --detach "$work/$side" "$rev" >/dev/null
+done
+if [ -n "$carry" ]; then
+	IFS=, read -r -a carried <<<"$carry"
+	for path in "${carried[@]}"; do
+		mkdir -p "$(dirname "$work/base/$path")"
+		cp "$work/head/$path" "$work/base/$path"
+	done
+fi
+for side in base head; do
 	commit=$(git -C "$work/$side" rev-parse HEAD)
 	module=$(cd "$work/$side" && go list -m)
 	# The overlay supplies the padding package's files, but the assembler still runs

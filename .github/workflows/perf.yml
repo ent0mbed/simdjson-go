@@ -26,6 +26,14 @@ on:
       head:
         description: 'Revision to measure'
         required: true
+      pattern:
+        description: 'Benchmark pattern to measure besides the three groups'
+        required: false
+        default: ''
+      carry:
+        description: 'With pattern: test files the base takes from head, comma-separated'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -87,5 +95,48 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: perf-${{ matrix.group }}
+        path: ${{ runner.temp }}/perf
+        if-no-files-found: ignore
+
+  # A manual measurement of benchmarks the groups do not cover, or that the base does not
+  # have yet. It reports and never fails: nothing has calibrated a threshold for them.
+  custom:
+    name: ab (custom)
+    if: ${{ inputs.pattern }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CGO_ENABLED: 0
+      BASE: ${{ inputs.base }}
+      HEAD: ${{ inputs.head }}
+      PATTERN: ${{ inputs.pattern }}
+      CARRY: ${{ inputs.carry }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.27.x
+        cache-dependency-path: |
+          go.sum
+          benchmarks/go.sum
+
+    - name: Measure
+      run: |
+        resolve() { git rev-parse --verify -q "$1^{commit}" || git rev-parse --verify "origin/$1^{commit}"; }
+        grep -m1 'model name' /proc/cpuinfo
+        grep -o -m1 -w avx512f /proc/cpuinfo || echo "no avx512f"
+        benchmarks/perfgate/ab.sh -p "$PATTERN" -l custom ${CARRY:+-s "$CARRY"} -n \
+          -b "$(resolve "$BASE")" -h "$(resolve "$HEAD")" -c 1 -o "$RUNNER_TEMP/perf"
+
+    - name: Keep the raw output
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: perf-custom
         path: ${{ runner.temp }}/perf
         if-no-files-found: ignore
