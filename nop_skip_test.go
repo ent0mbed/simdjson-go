@@ -348,33 +348,35 @@ func TestReadersSkipNOPs(t *testing.T) {
 	}
 }
 
-// A skip of 0 comes back to the same NOP. Each reader must stop there, and must not
-// continue in a loop.
+// A skip of 0 comes back to the same NOP, and on a 32-bit int so does one of 1<<32. Each
+// reader must stop there, and must not continue in a loop.
 func TestReadersStopAtZeroNOP(t *testing.T) {
-	pj := &ParsedJson{Tape: []uint64{word(TagNull, 0), word(TagNop, 0), word(TagBoolTrue, 0)}}
+	for _, skip := range []uint64{0, 1 << 32} {
+		pj := &ParsedJson{Tape: []uint64{word(TagNull, 0), word(TagNop, skip), word(TagBoolTrue, 0)}}
 
-	i := pj.Iter()
-	if typ := i.Advance(); typ != TypeNull {
-		t.Fatalf("Advance: %v, want null", typ)
-	}
-	if typ := i.Advance(); typ != TypeNone || i.t != TagEnd {
-		t.Errorf("Advance: %v, tag %v, want the end", typ, i.t)
-	}
+		i := pj.Iter()
+		if typ := i.Advance(); typ != TypeNull {
+			t.Fatalf("Advance: %v, want null", typ)
+		}
+		if typ := i.Advance(); typ != TypeNone || i.t != TagEnd {
+			t.Errorf("skip %d, Advance: %v, tag %v, want the end", skip, typ, i.t)
+		}
 
-	i = pj.Iter()
-	if tag := i.AdvanceInto(); tag != TagNull {
-		t.Fatalf("AdvanceInto: %v, want null", tag)
-	}
-	if tag := i.AdvanceInto(); tag != TagEnd {
-		t.Errorf("AdvanceInto: %v, want the end", tag)
-	}
+		i = pj.Iter()
+		if tag := i.AdvanceInto(); tag != TagNull {
+			t.Fatalf("AdvanceInto: %v, want null", tag)
+		}
+		if tag := i.AdvanceInto(); tag != TagEnd {
+			t.Errorf("skip %d, AdvanceInto: %v, want the end", skip, tag)
+		}
 
-	i = pj.Iter()
-	var dst Iter
-	if typ, err := i.AdvanceIter(&dst); typ != TypeNull || err != nil {
-		t.Fatalf("AdvanceIter: %v, %v, want null", typ, err)
-	}
-	if _, err := i.AdvanceIter(&dst); err == nil {
-		t.Error("AdvanceIter: no error")
+		i = pj.Iter()
+		var dst Iter
+		if typ, err := i.AdvanceIter(&dst); typ != TypeNull || err != nil {
+			t.Fatalf("AdvanceIter: %v, %v, want null", typ, err)
+		}
+		if _, err := i.AdvanceIter(&dst); err == nil {
+			t.Errorf("skip %d, AdvanceIter: no error", skip)
+		}
 	}
 }

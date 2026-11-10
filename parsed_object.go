@@ -35,7 +35,21 @@ type Object struct {
 // See Iter.Interface() for a reference on value types.
 func (o *Object) Map(dst map[string]interface{}) (map[string]interface{}, error) {
 	if dst == nil {
-		dst = make(map[string]interface{})
+		// A member takes at least three words: a key of two and a value. A map holds 8
+		// entries before it grows, so a hint up to 8 only costs. The count is a hint.
+		n := 0
+		if (len(o.tape.Tape)-o.off)/3 > 8 {
+			i := o.tape.Iter()
+			i.off = o.off
+			for i.Advance() == TypeString && i.Advance() != TypeNone {
+				n++
+			}
+		}
+		if n > 8 {
+			dst = make(map[string]interface{}, n)
+		} else {
+			dst = make(map[string]interface{})
+		}
 	}
 	var tmp Iter
 	for {

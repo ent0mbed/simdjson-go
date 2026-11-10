@@ -704,6 +704,48 @@ func TestArray_DeleteElements(t *testing.T) {
 	}
 }
 
+func TestArray_InterfaceCap(t *testing.T) {
+	if !SupportedCPU() {
+		t.SkipNow()
+	}
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{input: `[{"a":1,"b":[2,3]},{},{"c":"d"}]`, want: 3},
+		{input: `[[1,2,3],[],[[4]],["e"]]`, want: 4},
+		{input: `[true,false,null,null,true]`, want: 5},
+		{input: `[]`, want: 0},
+		{input: `[1,-2,3.5,18446744073709551615]`, want: 4},
+		{input: `["a","bc",""]`, want: 3},
+	}
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			pj, err := Parse([]byte(test.input), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			iter := pj.Iter()
+			iter.AdvanceInto()
+			_, root, err := iter.Root(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			arr, err := root.Array(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := arr.Interface()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != test.want || cap(got) != len(got) {
+				t.Errorf("len %d, cap %d, want both %d", len(got), cap(got), test.want)
+			}
+		})
+	}
+}
+
 func TestIter_SetBool(t *testing.T) {
 	if !SupportedCPU() {
 		t.SkipNow()

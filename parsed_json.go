@@ -336,14 +336,16 @@ func (i *Iter) Advance() Type {
 			i.off++
 			break
 		}
-		// The writers of NOPs count the skip from the NOP itself. A skip of 0 comes back
-		// to the same NOP. Advance cannot return an error, and it goes to the end, as
-		// AdvanceInto does.
-		if i.cur == 0 {
+		// The writers of NOPs count the skip from the NOP itself. A skip that is not
+		// positive as an int - a 32-bit int can make one of a large payload - would stay
+		// on the NOP or go back. Advance cannot return an error, and it goes to the end,
+		// as AdvanceInto does.
+		skip := int(i.cur)
+		if skip <= 0 {
 			i.moveToEnd()
 			return TypeNone
 		}
-		i.off += int(i.cur)
+		i.off += skip
 	}
 	i.calcNext(false)
 	if i.addNext < 0 {
@@ -395,11 +397,12 @@ func (i *Iter) AdvanceInto() Tag {
 			i.off++
 			break
 		}
-		if i.cur <= 0 {
+		skip := int(i.cur)
+		if skip <= 0 {
 			i.moveToEnd()
 			return TagEnd
 		}
-		i.off += int(i.cur)
+		i.off += skip
 	}
 	i.calcNext(true)
 	return i.t
@@ -479,11 +482,12 @@ func (i *Iter) advanceIter(dst *Iter) (Type, error) {
 		i.cur = v & JSONVALUEMASK
 		i.t = Tag(v >> 56)
 		if i.t == TagNop {
-			if i.cur <= 0 {
+			skip := int(i.cur)
+			if skip <= 0 {
 				return TypeNone, errors.New("invalid nop skip")
 			}
 			// The writers of NOPs count the skip from the NOP itself.
-			i.off += int(i.cur)
+			i.off += skip
 			continue
 		}
 		i.off++
@@ -1163,16 +1167,16 @@ func (i *Iter) Interface() (interface{}, error) {
 	case TypeNull:
 		return nil, nil
 	case TypeArray:
-		arr, err := i.Array(nil)
-		if err != nil {
+		var arr Array
+		if _, err := i.Array(&arr); err != nil {
 			return nil, err
 		}
 		return arr.Interface()
 	case TypeString:
 		return i.String()
 	case TypeObject:
-		obj, err := i.Object(nil)
-		if err != nil {
+		var obj Object
+		if _, err := i.Object(&obj); err != nil {
 			return nil, err
 		}
 		return obj.Map(nil)

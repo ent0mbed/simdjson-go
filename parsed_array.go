@@ -154,12 +154,19 @@ func (a *Array) MarshalJSONBuffer(dst []byte) ([]byte, error) {
 // Interface returns the array as a slice of interfaces.
 // See Iter.Interface() for a reference on value types.
 func (a *Array) Interface() ([]interface{}, error) {
-	// Estimate length. Assume one value per element.
-	lenEst := (len(a.tape.Tape) - a.off - 1) / 2
-	if lenEst < 0 {
-		lenEst = 0
+	// Numbers and strings take two words, so half the words count them, and counting
+	// would add a pass over every element for a size the estimate already has right.
+	// Other elements take one word or a whole subtree, so they are counted.
+	var n int
+	switch a.FirstType() {
+	case TypeInt, TypeUint, TypeFloat, TypeString:
+		n = (len(a.tape.Tape) - a.off - 1) / 2
+	default:
+		for i := a.Iter(); i.Advance() != TypeNone; {
+			n++
+		}
 	}
-	dst := make([]interface{}, 0, lenEst)
+	dst := make([]interface{}, 0, n)
 	i := a.Iter()
 	for i.Advance() != TypeNone {
 		elem, err := i.Interface()
