@@ -27,7 +27,7 @@ import (
 // There are methods that allows to get full arrays if the value type is the same.
 // Otherwise an iterator can be retrieved.
 type Array struct {
-	tape ParsedJson
+	tape tapeView
 	off  int
 }
 

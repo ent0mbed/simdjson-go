@@ -461,7 +461,7 @@ func TestNextElementBytesCorruptTape(t *testing.T) {
 			"element has negative offset"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			o := Object{tape: ParsedJson{Tape: tt.tape, Message: []byte("k")}}
+			o := Object{tape: (&ParsedJson{Tape: tt.tape, Message: []byte("k")}).view()}
 			var dst Iter
 			_, _, err := o.NextElementBytes(&dst)
 			if err == nil || err.Error() != tt.want {

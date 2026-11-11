@@ -25,7 +25,7 @@ import (
 // Object represents a JSON object.
 type Object struct {
 	// Complete tape
-	tape ParsedJson
+	tape tapeView
 
 	// offset of the next entry to be decoded
 	off int
@@ -130,7 +130,7 @@ func (o *Object) FindKey(key string, dst *Element) *Element {
 			continue
 		}
 		// Read name
-		name, err := tmp.tape.stringByteAt(offset, length)
+		name, err := tmp.tape.src.stringByteAt(offset, length)
 		if err != nil {
 			return nil
 		}
@@ -173,7 +173,7 @@ func (o *Object) forEachKey(fn func(key []byte, i Iter), onlyKeys map[string]str
 		offset := tmp.cur
 		length := tmp.tape.Tape[tmp.off]
 		// Read name
-		name, err := tmp.tape.stringByteAt(offset, length)
+		name, err := tmp.tape.src.stringByteAt(offset, length)
 		if err != nil {
 			return fmt.Errorf("getting object name: %w", err)
 		}
@@ -209,7 +209,7 @@ func (i *Iter) advanceMember() (name []byte, ok bool, err error) {
 		}
 		return nil, false, fmt.Errorf("object: unexpected name tag %v", i.t)
 	}
-	name, err = i.tape.stringByteAt(i.cur, i.tape.Tape[i.off])
+	name, err = i.tape.src.stringByteAt(i.cur, i.tape.Tape[i.off])
 	if err != nil {
 		return nil, false, fmt.Errorf("getting object name: %w", err)
 	}
@@ -242,7 +242,7 @@ func (o *Object) ForEach(fn func(key []byte, i Iter), onlyKeys map[string]struct
 			key, length, value := tape[p], tape[p+1], tape[p+2]
 			t, cur := Tag(value>>56), value&JSONVALUEMASK
 			if addNext, fast := addNextOf(t, cur, p+3); fast {
-				if next, inArea := tmp.tape.stringBytes(key&JSONVALUEMASK, length); inArea {
+				if next, inArea := tmp.tape.src.stringBytes(key&JSONVALUEMASK, length); inArea {
 					tmp.off, tmp.t, tmp.cur, tmp.addNext = p+3, t, cur, addNext
 					fn(name, e)
 					name = next
@@ -283,7 +283,7 @@ func (o *Object) DeleteElems(fn func(key []byte, i Iter) bool, onlyKeys map[stri
 		offset := tmp.cur
 		length := tmp.tape.Tape[tmp.off]
 		// Read name
-		name, err := tmp.tape.stringByteAt(offset, length)
+		name, err := tmp.tape.src.stringByteAt(offset, length)
 		if err != nil {
 			return fmt.Errorf("getting object name: %w", err)
 		}
@@ -355,7 +355,7 @@ func (o *Object) FindPath(dst *Element, path ...string) (*Element, error) {
 			continue
 		}
 		// Read name
-		name, err := tmp.tape.stringByteAt(offset, length)
+		name, err := tmp.tape.src.stringByteAt(offset, length)
 		if err != nil {
 			return dst, err
 		}
@@ -415,9 +415,9 @@ func (o *Object) nextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 			length := o.tape.Tape[o.off+1]
 			offset := v & JSONVALUEMASK
 			var ok bool
-			if name, ok = o.tape.stringBytes(offset, length); !ok {
+			if name, ok = o.tape.src.stringBytes(offset, length); !ok {
 				return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
-					o.tape.stringOutsideArea(offset, length))
+					o.tape.src.stringOutsideArea(offset, length))
 			}
 			o.off += 2
 		case TagObjectEnd:
@@ -477,7 +477,7 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 		if v := tape[off]; Tag(v>>56) == TagString {
 			// The inlinable form: a key name is read for every element of every object,
 			// which made the call itself worth removing.
-			if n, ok := o.tape.stringBytes(v&JSONVALUEMASK, tape[off+1]); ok {
+			if n, ok := o.tape.src.stringBytes(v&JSONVALUEMASK, tape[off+1]); ok {
 				v = tape[off+2]
 				off += 3
 				t, cur := Tag(v>>56), v&JSONVALUEMASK
@@ -492,8 +492,8 @@ func (o *Object) NextElementBytes(dst *Iter) (name []byte, t Type, err error) {
 					dst.t = t
 					dst.off = off
 					dst.addNext = into
-					if !dst.tape.sameSource(&o.tape) {
-						dst.tape = o.tape
+					if dst.tape.src != o.tape.src {
+						dst.tape.src = o.tape.src
 					}
 					dst.tape.Tape = tape[:end]
 					o.off = end

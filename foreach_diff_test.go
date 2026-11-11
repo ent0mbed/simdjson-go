@@ -48,7 +48,7 @@ func objectForEachReference(o *Object, fn func(key []byte, i Iter)) error {
 			}
 			return fmt.Errorf("object: unexpected name tag %v", tmp.t)
 		}
-		name, err := tmp.tape.stringByteAt(tmp.cur, tmp.tape.Tape[tmp.off])
+		name, err := tmp.tape.src.stringByteAt(tmp.cur, tmp.tape.Tape[tmp.off])
 		if err != nil {
 			return fmt.Errorf("getting object name: %w", err)
 		}
@@ -224,7 +224,7 @@ func TestArrayForEachMatchesReference(t *testing.T) {
 		for _, w := range forEachWrites {
 			for _, start := range dt.starts {
 				var d dirty
-				ga, wa := Array{tape: got, off: start}, Array{tape: want, off: start}
+				ga, wa := Array{tape: tapeView{Tape: got.Tape, src: dt.pj}, off: start}, Array{tape: tapeView{Tape: want.Tape, src: dt.pj}, off: start}
 				compareForEach(t, fmt.Sprintf("%s from %d, writing %s", dt.name, start, w.name), got, want, &d,
 					func(fn func(name []byte, i Iter)) error {
 						ga.ForEach(func(i Iter) { fn(nil, i) })
@@ -250,7 +250,7 @@ func TestObjectForEachMatchesReference(t *testing.T) {
 		for _, w := range forEachWrites {
 			for _, start := range dt.starts {
 				var d dirty
-				gotObj, wantObj := Object{tape: got, off: start}, Object{tape: want, off: start}
+				gotObj, wantObj := Object{tape: tapeView{Tape: got.Tape, src: dt.pj}, off: start}, Object{tape: tapeView{Tape: want.Tape, src: dt.pj}, off: start}
 				compareForEach(t, fmt.Sprintf("%s from %d, writing %s", dt.name, start, w.name), got, want, &d,
 					func(fn func(name []byte, i Iter)) error {
 						return gotObj.ForEach(func(key []byte, i Iter) { members++; fn(key, i) }, nil)

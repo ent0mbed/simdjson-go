@@ -136,9 +136,9 @@ func nextElementBytesReference(o *Object, dst *Iter) (name []byte, t Type, err e
 			length := o.tape.Tape[o.off+1]
 			offset := v & JSONVALUEMASK
 			var ok bool
-			if name, ok = o.tape.stringBytes(offset, length); !ok {
+			if name, ok = o.tape.src.stringBytes(offset, length); !ok {
 				return nil, TypeNone, fmt.Errorf("parsing object element name: %w",
-					o.tape.stringOutsideArea(offset, length))
+					o.tape.src.stringOutsideArea(offset, length))
 			}
 			o.off += 2
 		case TagObjectEnd:
@@ -192,7 +192,7 @@ func sameIter(got, want *Iter) string {
 			got.off, got.addNext, got.cur, got.t, want.off, want.addNext, want.cur, want.t)
 	}
 	if len(got.tape.Tape) != len(want.tape.Tape) || cap(got.tape.Tape) != cap(want.tape.Tape) ||
-		got.tape.Strings != want.tape.Strings || len(got.tape.Message) != len(want.tape.Message) {
+		got.tape.src != want.tape.src {
 		return fmt.Sprintf("tape of %d/%d words, want %d/%d",
 			len(got.tape.Tape), cap(got.tape.Tape), len(want.tape.Tape), cap(want.tape.Tape))
 	}
@@ -419,7 +419,7 @@ func TestNextElementBytesMatchesReference(t *testing.T) {
 		for _, start := range dt.starts {
 			// From every tag, not only after an object's start: the first step from
 			// anywhere else is the unexpected-tag error, or a key at a NOP's end.
-			got, want := Object{tape: *dt.pj, off: start}, Object{tape: *dt.pj, off: start}
+			got, want := Object{tape: dt.pj.view(), off: start}, Object{tape: dt.pj.view(), off: start}
 			var gotDst, wantDst Iter
 			for step := 0; step < stepsPerStart; step++ {
 				var gn, wn []byte
@@ -505,7 +505,7 @@ func TestReusedDstReadsItsDocument(t *testing.T) {
 				next func(pj *ParsedJson, dst *Iter) (Type, error)
 			}{
 				{"NextElementBytes", func(pj *ParsedJson, dst *Iter) (Type, error) {
-					o := Object{tape: *pj}
+					o := Object{tape: pj.view()}
 					_, typ, err := o.NextElementBytes(dst)
 					return typ, err
 				}},

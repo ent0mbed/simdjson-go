@@ -23,7 +23,6 @@ import (
 	"math"
 	"strconv"
 	"sync/atomic"
-	"unsafe"
 )
 
 const JSONVALUEMASK = 0xff_ffff_ffff_ffff
@@ -76,16 +75,26 @@ type ParsedJson struct {
 	internal *internalParsedJson
 }
 
-// sameSource reports whether pj reads its strings where o does. Strings alone does not
-// tell, as two documents can share it over different messages. The capacity of Message
-// is left out: nothing reads it past its length.
+// tapeView is what a reader keeps of its document: the part of the tape it may read, and
+// the document itself for its strings. Readers are copied by value at every step, and the
+// rest of the document would only make each copy larger. src is not embedded, so that a
+// promoted Tape or Iter cannot silently mean the whole document.
 //
-// An iterator checks this before it copies a document into the destination of a step,
-// which is nearly always the destination of the step before. A walk with AdvanceIter
-// was up to 7% faster for it.
-func (pj *ParsedJson) sameSource(o *ParsedJson) bool {
-	return pj.Strings == o.Strings && len(pj.Message) == len(o.Message) &&
-		unsafe.SliceData(pj.Message) == unsafe.SliceData(o.Message)
+// A step compares src before it stores it: its destination is nearly always the
+// destination of the step before, and a pointer store goes through the write barrier
+// check.
+type tapeView struct {
+	Tape []uint64
+	src  *ParsedJson
+}
+
+func (pj *ParsedJson) view() tapeView {
+	return tapeView{Tape: pj.Tape, src: pj}
+}
+
+// Iter returns an iterator bounded by the view, not by the whole document.
+func (v *tapeView) Iter() Iter {
+	return Iter{tape: *v}
 }
 
 // Stage 1 fills whole buffers of structural indexes and hands them to stage 2 over a
@@ -160,7 +169,7 @@ func (pj *internalParsedJson) syncBuffer(n int) *[indexSize]uint32 {
 
 // Iter returns a new Iter.
 func (pj *ParsedJson) Iter() Iter {
-	return Iter{tape: *pj}
+	return Iter{tape: pj.view()}
 }
 
 // Iter.Object and Iter.Array write their tape one field at a time. A copy of all of the
@@ -168,11 +177,9 @@ func (pj *ParsedJson) Iter() Iter {
 // cannot forward such a load, and the load waits until the stores are in the cache. A
 // returned Iter causes the same stall, because Go builds it in a temporary variable and
 // then copies all of it.
-func (pj *ParsedJson) iterInto(i *Iter) {
-	i.tape.Message = pj.Message
-	i.tape.Tape = pj.Tape
-	i.tape.Strings = pj.Strings
-	i.tape.internal = pj.internal
+func (v *tapeView) iterInto(i *Iter) {
+	i.tape.Tape = v.Tape
+	i.tape.src = v.src
 	i.off, i.addNext, i.cur, i.t = 0, 0, 0, 0
 }
 
@@ -221,7 +228,7 @@ func (pj *ParsedJson) stringOutsideArea(offset, length uint64) error {
 // This will usually be an object or an array.
 // If the callback returns a non-nil error parsing stops and the errors is returned.
 func (pj *ParsedJson) ForEach(fn func(i Iter) error) error {
-	i := Iter{tape: *pj}
+	i := Iter{tape: pj.view()}
 	var elem Iter
 	for {
 		t, err := i.AdvanceIter(&elem)
@@ -274,7 +281,7 @@ func (pj *ParsedJson) Clone(dst *ParsedJson) *ParsedJson {
 // If an Iter is copied, the copy will be independent.
 type Iter struct {
 	// The tape where this iter start.
-	tape ParsedJson
+	tape tapeView
 
 	// offset of the next entry to be decoded
 	off int
@@ -549,8 +556,8 @@ func (i *Iter) AdvanceIter(dst *Iter) (Type, error) {
 				// written, in wider loads than the stores, which the store queue cannot
 				// forward - and the load waits for the stores to reach the cache. It
 				// was half the time this function took.
-				if i != dst && !dst.tape.sameSource(&i.tape) {
-					dst.tape = i.tape
+				if i != dst && dst.tape.src != i.tape.src {
+					dst.tape.src = i.tape.src
 				}
 				tape := i.tape.Tape
 				i.off, i.t, i.cur, i.addNext = off, t, cur, next
@@ -951,7 +958,7 @@ func (i *Iter) String() (string, error) {
 		return "", errors.New("corrupt input: no string offset")
 	}
 
-	return i.tape.stringAt(i.cur, i.tape.Tape[i.off])
+	return i.tape.src.stringAt(i.cur, i.tape.Tape[i.off])
 }
 
 // StringBytes returns a string as byte array.
@@ -964,10 +971,10 @@ func (i *Iter) StringBytes() ([]byte, error) {
 	}
 	// The inlinable form, so that reading a string is slice arithmetic here rather
 	// than a call.
-	if b, ok := i.tape.stringBytes(i.cur, i.tape.Tape[i.off]); ok {
+	if b, ok := i.tape.src.stringBytes(i.cur, i.tape.Tape[i.off]); ok {
 		return b, nil
 	}
-	return nil, i.tape.stringOutsideArea(i.cur, i.tape.Tape[i.off])
+	return nil, i.tape.src.stringOutsideArea(i.cur, i.tape.Tape[i.off])
 }
 
 // SetString can change a string, int, uint or float with the specified string.
@@ -982,11 +989,11 @@ func (i *Iter) SetString(v string) error {
 func (i *Iter) SetStringBytes(v []byte) error {
 	switch i.t {
 	case TagString, TagFloat, TagInteger, TagUint:
-		i.cur = ((uint64(TagString) << JSONTAGOFFSET) | STRINGBUFBIT) | uint64(len(i.tape.Strings.B))
+		i.cur = ((uint64(TagString) << JSONTAGOFFSET) | STRINGBUFBIT) | uint64(len(i.tape.src.Strings.B))
 		i.tape.Tape[i.off-1] = i.cur
 		i.tape.Tape[i.off] = uint64(len(v))
 		i.t = TagString
-		i.tape.Strings.B = append(i.tape.Strings.B, v...)
+		i.tape.src.Strings.B = append(i.tape.src.Strings.B, v...)
 		return nil
 	}
 	return fmt.Errorf("cannot set tag %s to string", i.t.String())
@@ -1037,8 +1044,7 @@ func (i *Iter) Root(dst *Iter) (Type, *Iter, error) {
 		dst.cur = i.cur
 		dst.off = i.off
 		dst.t = i.t
-		dst.tape.Strings = i.tape.Strings
-		dst.tape.Message = i.tape.Message
+		dst.tape.src = i.tape.src
 	}
 	dst.addNext = 0
 	dst.tape.Tape = i.tape.Tape[:i.cur-1]
@@ -1232,8 +1238,7 @@ func (i *Iter) Object(dst *Object) (*Object, error) {
 		dst = &Object{}
 	}
 	dst.tape.Tape = i.tape.Tape[:end]
-	dst.tape.Strings = i.tape.Strings
-	dst.tape.Message = i.tape.Message
+	dst.tape.src = i.tape.src
 	dst.off = i.off
 
 	return dst, nil
@@ -1253,8 +1258,7 @@ func (i *Iter) Array(dst *Array) (*Array, error) {
 		dst = &Array{}
 	}
 	dst.tape.Tape = i.tape.Tape[:end]
-	dst.tape.Strings = i.tape.Strings
-	dst.tape.Message = i.tape.Message
+	dst.tape.src = i.tape.src
 	dst.off = i.off
 
 	return dst, nil
