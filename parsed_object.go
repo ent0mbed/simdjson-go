@@ -233,6 +233,7 @@ func (o *Object) ForEach(fn func(key []byte, i Iter), onlyKeys map[string]struct
 	var tmp Iter
 	o.tape.iterInto(&tmp)
 	tmp.off = o.off
+	src := o.tape.src
 	name, ok, err := tmp.advanceMember()
 	for ok {
 		e := tmp
@@ -242,7 +243,7 @@ func (o *Object) ForEach(fn func(key []byte, i Iter), onlyKeys map[string]struct
 			key, length, value := tape[p], tape[p+1], tape[p+2]
 			t, cur := Tag(value>>56), value&JSONVALUEMASK
 			if addNext, fast := addNextOf(t, cur, p+3); fast {
-				if next, inArea := tmp.tape.src.stringBytes(key&JSONVALUEMASK, length); inArea {
+				if next, inArea := src.stringBytes(key&JSONVALUEMASK, length); inArea {
 					tmp.off, tmp.t, tmp.cur, tmp.addNext = p+3, t, cur, addNext
 					fn(name, e)
 					name = next
