@@ -34,6 +34,14 @@ on:
         description: 'With pattern: test files the base takes from head, comma-separated'
         required: false
         default: ''
+      group:
+        description: 'Measure only this group: corpus, stage1 or read'
+        required: false
+        default: ''
+      cpu:
+        description: 'Stop at once unless the CPU model of the runner matches this pattern'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -52,10 +60,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [ corpus, stage1, read ]
+        group: ${{ fromJSON(inputs.group && format('["{0}"]', inputs.group) || '["corpus","stage1","read"]') }}
     env:
       CGO_ENABLED: 0
     steps:
+    # A hosted runner is a different CPU each time. A run that wants one of them gives
+    # up here, before it costs anything, when it drew another.
+    - name: Check the CPU
+      if: ${{ inputs.cpu }}
+      env:
+        WANT: ${{ inputs.cpu }}
+      run: grep -m1 'model name' /proc/cpuinfo | tee /dev/stderr | grep -Eq "$WANT"
+
     - name: Checkout code
       uses: actions/checkout@v4
       with:
